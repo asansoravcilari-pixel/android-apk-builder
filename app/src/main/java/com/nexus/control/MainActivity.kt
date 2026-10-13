@@ -97,14 +97,6 @@ private val palettes = listOf(
     NexusPalette("Açık", Color(0xFFF3F6FB), Color.White, Color(0xFFE8EEF7), Color(0xFF1F6BFF), Color(0xFF7453FF), Color(0xFF172033), Color(0xFF64748B), light = true)
 )
 
-private enum class RootPage(val title: String, val icon: ImageVector) {
-    COMMAND("Komuta", Icons.Outlined.Dashboard),
-    OPERATIONS("Operasyon", Icons.Outlined.Build),
-    LABS("Lab", Icons.Outlined.Code),
-    COMMS("İletişim", Icons.Outlined.Notifications),
-    SETTINGS("Ayarlar", Icons.Outlined.Settings)
-}
-
 private enum class Module(val title: String, val subtitle: String, val icon: ImageVector) {
     CORE("NEXUS Core Modu", "Core sağlık ve bağlantı merkezi", Icons.Outlined.Security),
     TESTS("Test Merkezi", "DNS · TCP · HTTPS gerçek testleri", Icons.Outlined.CheckCircle),
@@ -155,41 +147,70 @@ class MainActivity : ComponentActivity() {
                 surface = palette.surface, surfaceVariant = palette.surface2, onBackground = palette.text, onSurface = palette.text
             )
 
-            var page by remember { mutableStateOf(RootPage.COMMAND) }
+            val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
             var module by remember { mutableStateOf<Module?>(null) }
-            BackHandler(enabled = module != null) { module = null }
+            var showSettings by remember { mutableStateOf(false) }
             val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+            BackHandler(enabled = module != null || showSettings) {
+                module = null
+                showSettings = false
+            }
+
+            fun closeDrawer() { scope.launch { drawerState.close() } }
+            fun openHome() {
+                module = null
+                showSettings = false
+                closeDrawer()
+            }
+            fun openModule(target: Module) {
+                module = target
+                showSettings = false
+                closeDrawer()
+            }
+            fun openSettings() {
+                module = null
+                showSettings = true
+                closeDrawer()
+            }
+
             MaterialTheme(colorScheme = scheme) {
-                Scaffold(
-                    containerColor = palette.background,
-                    bottomBar = {
-                        if (module == null) NavigationBar(containerColor = palette.surface) {
-                            RootPage.entries.forEach { item ->
-                                NavigationBarItem(
-                                    selected = page == item,
-                                    onClick = { page = item },
-                                    icon = { Icon(item.icon, item.title) },
-                                    label = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 10.sp) }
-                                )
-                            }
-                        }
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        NexusDrawer(
+                            p = palette,
+                            currentModule = module,
+                            settingsSelected = showSettings,
+                            dashboardSelected = module == null && !showSettings,
+                            onHome = ::openHome,
+                            onModule = ::openModule,
+                            onSettings = ::openSettings
+                        )
                     }
-                ) { padding ->
-                    Column(
-                        Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(15.dp),
-                        verticalArrangement = Arrangement.spacedBy(13.dp)
-                    ) {
-                        Header(palette, module?.title ?: page.title, module != null, { module = null }, { module = Module.NOTIFICATIONS })
-                        if (module != null) {
-                            ModuleScreen(module!!, palette, prefs, { activity.sendTestNotification() })
-                        } else {
-                            when (page) {
-                                RootPage.COMMAND -> CommandCenter(palette, prefs) { module = it }
-                                RootPage.OPERATIONS -> OperationsPage(palette) { module = it }
-                                RootPage.LABS -> LabsPage(palette) { module = it }
-                                RootPage.COMMS -> CommsPage(palette) { module = it }
-                                RootPage.SETTINGS -> SettingsPage(
+                ) {
+                    Scaffold(containerColor = palette.background) { padding ->
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 15.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(13.dp)
+                        ) {
+                            NexusHeader(
+                                p = palette,
+                                title = when {
+                                    showSettings -> "Ayarlar"
+                                    module != null -> module!!.title
+                                    else -> "Komuta Merkezi"
+                                },
+                                onMenu = { scope.launch { drawerState.open() } },
+                                onNotifications = { openModule(Module.NOTIFICATIONS) }
+                            )
+
+                            when {
+                                showSettings -> SettingsPage(
                                     palette, prefs,
                                     onTheme = { name -> scope.launch { store.edit { it[THEME] = name } } },
                                     onAlerts = { enabled ->
@@ -201,17 +222,22 @@ class MainActivity : ComponentActivity() {
                                     onBuildAlerts = { enabled -> scope.launch { store.edit { it[BUILD_ALERTS] = enabled } } },
                                     onWidgetOpacity = { value ->
                                         scope.launch { store.edit { it[WIDGET_OPACITY] = value } }
-                                        activity.getSharedPreferences("nexus_widget", Context.MODE_PRIVATE).edit().putInt("opacity", value.toInt()).apply()
+                                        activity.getSharedPreferences("nexus_widget", Context.MODE_PRIVATE)
+                                            .edit().putInt("opacity", value.toInt()).apply()
                                         StatusWidget.updateAll(activity)
                                     },
                                     saveHealthUrl = { value -> scope.launch { store.edit { it[HEALTH_URL] = value } } },
                                     saveWssUrl = { value -> scope.launch { store.edit { it[WSS_URL] = value } } },
-                                    requestPermission = { if (Build.VERSION.SDK_INT >= 33) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                                    requestPermission = {
+                                        if (Build.VERSION.SDK_INT >= 33) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    },
                                     testNotification = { activity.sendTestNotification() }
                                 )
+                                module != null -> ModuleScreen(module!!, palette, prefs) { activity.sendTestNotification() }
+                                else -> CommandCenter(palette, prefs, ::openModule)
                             }
+                            Spacer(Modifier.height(18.dp))
                         }
-                        Spacer(Modifier.height(8.dp))
                     }
                 }
             }
@@ -231,23 +257,135 @@ class MainActivity : ComponentActivity() {
             .setContentTitle("NEXUS Control")
             .setContentText("Bildirim kanalı çalışıyor. Canlı alarm için Core olay akışı bağlanacak.")
             .setAutoCancel(true).build()
-        getSystemService(NotificationManager::class.java).notify(3001, n)
+        getSystemService(NotificationManager::class.java).notify(4001, n)
     }
 }
 
 @Composable
-private fun Header(p: NexusPalette, title: String, canBack: Boolean, onBack: () -> Unit, onNotifications: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        if (canBack) IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Geri", tint = p.accent) }
-        else Box(Modifier.size(38.dp).background(p.accent.copy(alpha = .13f), RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
-            Text("N", color = p.accent, fontWeight = FontWeight.Black, fontSize = 20.sp)
+private fun NexusDrawer(
+    p: NexusPalette,
+    currentModule: Module?,
+    settingsSelected: Boolean,
+    dashboardSelected: Boolean,
+    onHome: () -> Unit,
+    onModule: (Module) -> Unit,
+    onSettings: () -> Unit
+) {
+    ModalDrawerSheet(
+        drawerContainerColor = p.surface,
+        modifier = Modifier.width(318.dp)
+    ) {
+        Column(
+            Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(46.dp).background(
+                        Brush.linearGradient(listOf(p.accent.copy(alpha = .30f), p.accent2.copy(alpha = .26f))),
+                        RoundedCornerShape(15.dp)
+                    ),
+                    contentAlignment = Alignment.Center
+                ) { Text("N", color = p.accent, fontWeight = FontWeight.Black, fontSize = 23.sp) }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("NEXUS CONTROL", color = p.accent, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp, fontSize = 11.sp)
+                    Text("Mobil Operasyon Merkezi", color = p.muted, fontSize = 11.sp)
+                }
+            }
+            HorizontalDivider(color = p.text.copy(alpha = .08f), modifier = Modifier.padding(vertical = 8.dp))
+            DrawerItem("Komuta Merkezi", "Tek ekran operasyon görünümü", Icons.Outlined.Dashboard, dashboardSelected, p, onHome)
+
+            DrawerGroup("CORE & OPERASYON", p)
+            listOf(Module.CORE, Module.SERVERS, Module.TESTS, Module.MAINTENANCE, Module.RECOVERY, Module.BACKUP).forEach { m ->
+                DrawerModuleItem(m, currentModule == m, p) { onModule(m) }
+            }
+
+            DrawerGroup("GÖZLEM & GÜVENLİK", p)
+            listOf(Module.LOGS, Module.SECURITY, Module.BUILD, Module.NOTIFICATIONS).forEach { m ->
+                DrawerModuleItem(m, currentModule == m, p) { onModule(m) }
+            }
+
+            DrawerGroup("LAB & ARAÇLAR", p)
+            listOf(Module.TERMINAL, Module.FILES, Module.APK, Module.SOCKET, Module.NETWORK, Module.CRYPTO, Module.BROWSER, Module.MAIL).forEach { m ->
+                DrawerModuleItem(m, currentModule == m, p) { onModule(m) }
+            }
+
+            DrawerGroup("UYGULAMA", p)
+            DrawerItem("Ayarlar", "Tema · bağlantı · widget · bildirim", Icons.Outlined.Settings, settingsSelected, p, onSettings)
+            Spacer(Modifier.height(8.dp))
+            Surface(shape = RoundedCornerShape(14.dp), color = p.surface2.copy(alpha = .72f)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("v0.4.0", color = p.accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    Text("Drawer tabanlı tek ana dashboard", color = p.muted, fontSize = 10.sp)
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun DrawerGroup(title: String, p: NexusPalette) {
+    Text(
+        title,
+        color = p.muted,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Black,
+        letterSpacing = 1.1.sp,
+        modifier = Modifier.padding(start = 14.dp, top = 13.dp, bottom = 4.dp)
+    )
+}
+
+@Composable
+private fun DrawerModuleItem(module: Module, selected: Boolean, p: NexusPalette, onClick: () -> Unit) {
+    DrawerItem(module.title, module.subtitle, module.icon, selected, p, onClick)
+}
+
+@Composable
+private fun DrawerItem(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    selected: Boolean,
+    p: NexusPalette,
+    onClick: () -> Unit
+) {
+    NavigationDrawerItem(
+        label = {
+            Column {
+                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(subtitle, color = if (selected) p.text.copy(alpha = .72f) else p.muted, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
+        icon = { Icon(icon, title, tint = if (selected) p.accent else p.muted) },
+        selected = selected,
+        onClick = onClick,
+        shape = RoundedCornerShape(15.dp),
+        colors = NavigationDrawerItemDefaults.colors(
+            selectedContainerColor = p.accent.copy(alpha = .11f),
+            unselectedContainerColor = Color.Transparent,
+            selectedTextColor = p.text,
+            unselectedTextColor = p.text
+        )
+    )
+}
+
+@Composable
+private fun NexusHeader(p: NexusPalette, title: String, onMenu: () -> Unit, onNotifications: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(
+            onClick = onMenu,
+            modifier = Modifier.background(p.surface, RoundedCornerShape(14.dp))
+        ) { Icon(Icons.Outlined.Menu, "Menü", tint = p.accent) }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text("NEXUS CONTROL", color = p.accent, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp, fontSize = 10.sp)
-            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        IconButton(onClick = onNotifications) { Icon(Icons.Outlined.Notifications, "Bildirimler") }
+        IconButton(
+            onClick = onNotifications,
+            modifier = Modifier.background(p.surface, RoundedCornerShape(14.dp))
+        ) { Icon(Icons.Outlined.Notifications, "Bildirimler", tint = p.text) }
     }
 }
 
@@ -256,54 +394,271 @@ private fun CommandCenter(p: NexusPalette, prefs: UserPrefs, open: (Module) -> U
     val context = LocalContext.current
     val localState = remember(context) { LocalStateStore(context) }
     val maintenance = localState.loadMaintenance()
-    val brush = Brush.linearGradient(listOf(p.accent.copy(alpha=.28f), p.accent2.copy(alpha=.18f), p.surface))
-    Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.background(brush).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("NEXUS COMMAND CENTER", color = p.accent, fontWeight = FontWeight.Black, fontSize = 11.sp)
-            Text("Operasyon tek ekranda", fontWeight = FontWeight.ExtraBold, fontSize = 25.sp)
-            Text("Core · test · bakım · kurtarma · APK · socket · güvenlik", color = p.muted, fontSize = 12.sp)
-            HorizontalDivider(color = p.text.copy(alpha=.1f))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Pill("Evidence-first", true, p)
-                Pill("Capability-gated", true, p)
-                Pill("v0.3.0", true, p)
+    val history = localState.loadDiagnosticHistory()
+    val recovery = localState.loadRecoverySummary()
+    val coreHost = remember(prefs.healthUrl) { runCatching { Uri.parse(prefs.healthUrl).host.orEmpty() }.getOrDefault("") }
+    val wssHost = remember(prefs.wssUrl) { runCatching { Uri.parse(prefs.wssUrl).host.orEmpty() }.getOrDefault("") }
+
+    DashboardHero(p, maintenance.active, history.firstOrNull())
+
+    DashboardSection("Sistem Matrisi", "Yalnız gerçek yapılandırma ve yerel doğrulamalardan üretilir.", p)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        DashboardStateCard(
+            title = "Core",
+            state = if (prefs.healthUrl.isNotBlank()) "PROFİL HAZIR" else "YAPILANDIR",
+            detail = coreHost.ifBlank { "Health URL gerekli" },
+            icon = Icons.Outlined.Security,
+            ok = prefs.healthUrl.isNotBlank(),
+            p = p,
+            modifier = Modifier.weight(1f),
+            onClick = { open(Module.CORE) }
+        )
+        DashboardStateCard(
+            title = "WSS",
+            state = if (prefs.wssUrl.isNotBlank()) "PROFİL HAZIR" else "YAPILANDIR",
+            detail = wssHost.ifBlank { "WSS URL gerekli" },
+            icon = Icons.Outlined.Wifi,
+            ok = prefs.wssUrl.isNotBlank(),
+            p = p,
+            modifier = Modifier.weight(1f),
+            onClick = { open(Module.SOCKET) }
+        )
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        DashboardStateCard(
+            title = "Bakım",
+            state = if (maintenance.active) "AKTİF" else "KAPALI",
+            detail = if (maintenance.active) maintenance.note.ifBlank { "Bakım oturumu açık" } else "Aktif oturum yok",
+            icon = Icons.Outlined.Build,
+            ok = maintenance.active,
+            p = p,
+            modifier = Modifier.weight(1f),
+            onClick = { open(Module.MAINTENANCE) }
+        )
+        DashboardStateCard(
+            title = "Kurtarma",
+            state = if (recovery != null) "GEÇMİŞ VAR" else "HAZIR",
+            detail = recovery?.let { formatTime(it.first) } ?: "Preflight çalıştırılabilir",
+            icon = Icons.Outlined.Security,
+            ok = recovery != null,
+            p = p,
+            modifier = Modifier.weight(1f),
+            onClick = { open(Module.RECOVERY) }
+        )
+    }
+
+    DiagnosticOverview(history, p) { open(Module.TESTS) }
+
+    DashboardSection("Hızlı İşlemler", "Sık kullanılan merkezlere tek dokunuş", p)
+    QuickActionRail(p, open)
+
+    DashboardSection("Operasyon Akışı", "Son yerel doğrulamalar ve aktif durum", p)
+    OperationsFeed(history, maintenance, recovery, p)
+
+    DashboardSection("Araçlar", "Analiz ve erişim modülleri", p)
+    CompactModuleGrid(
+        listOf(Module.TERMINAL, Module.APK, Module.SOCKET, Module.BROWSER, Module.FILES, Module.SECURITY),
+        p,
+        open
+    )
+}
+
+@Composable
+private fun DashboardHero(p: NexusPalette, maintenanceActive: Boolean, lastTest: DiagnosticHistoryItem?) {
+    val brush = Brush.linearGradient(listOf(p.accent.copy(alpha = .28f), p.accent2.copy(alpha = .20f), p.surface))
+    Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.background(brush).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Box(Modifier.size(8.dp).background(if (maintenanceActive) p.danger else p.success, CircleShape))
+                        Text(if (maintenanceActive) "BAKIM MODU" else "COMMAND READY", color = if (maintenanceActive) p.danger else p.success, fontWeight = FontWeight.Black, fontSize = 10.sp, letterSpacing = 1.sp)
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    Text("Tüm operasyon tek ekranda", fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                    Text("Core · test · kurtarma · güvenlik · laboratuvar", color = p.muted, fontSize = 11.sp)
+                }
+                Box(Modifier.size(50.dp).background(p.accent.copy(alpha = .12f), RoundedCornerShape(16.dp)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Dashboard, null, tint = p.accent, modifier = Modifier.size(27.dp))
+                }
+            }
+            HorizontalDivider(color = p.text.copy(alpha = .08f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                HeroDatum("SÜRÜM", "0.4.0", p)
+                HeroDatum("SON TEST", lastTest?.let { if (it.ok) "PASS" else "FAIL" } ?: "YOK", p)
+                HeroDatum("MOD", if (maintenanceActive) "BAKIM" else "NORMAL", p)
             }
         }
     }
-    SectionHeader("Operasyon Durumu", "Durumlar yapılandırma ve yerel oturumdan okunur; canlı metrik uydurulmaz.", p)
-    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        StatTile("Core", if (prefs.healthUrl.isNotBlank()) "PROFİL HAZIR" else "BEKLEMEDE", if (prefs.healthUrl.isNotBlank()) "Health URL kayıtlı" else "Health URL gerekli", Icons.Outlined.Security, p, Modifier.weight(1f))
-        StatTile("WSS", if (prefs.wssUrl.isNotBlank()) "PROFİL HAZIR" else "BEKLEMEDE", if (prefs.wssUrl.isNotBlank()) "WSS URL kayıtlı" else "WSS URL gerekli", Icons.Outlined.Wifi, p, Modifier.weight(1f))
+}
+
+@Composable
+private fun HeroDatum(label: String, value: String, p: NexusPalette) {
+    Column {
+        Text(label, color = p.muted, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp)
+        Text(value, color = p.text, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        StatTile("Bakım", if (maintenance.active) "AKTİF" else "KAPALI", if (maintenance.active) "Yerel oturum kayıtlı" else "Yerel oturum yok", Icons.Outlined.Build, p, Modifier.weight(1f))
-        StatTile("Recovery", "HAZIR", "Preflight + geçmiş", Icons.Outlined.Security, p, Modifier.weight(1f))
+}
+
+@Composable
+private fun DashboardSection(title: String, subtitle: String, p: NexusPalette) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+            Text(subtitle, color = p.muted, fontSize = 10.sp)
+        }
     }
-    if (maintenance.active) InfoCard("Aktif bakım oturumu", maintenance.note.ifBlank { "Not girilmemiş" }, Icons.Outlined.Build, p)
-    SectionHeader("Hızlı Komut Merkezi", "Sık kullanılan operasyon alanları", p)
-    QuickGrid(listOf(Module.TESTS, Module.CORE, Module.MAINTENANCE, Module.RECOVERY, Module.APK, Module.SOCKET), p, open)
-    SectionHeader("Merkezler", "Gözlem ve yönetim", p)
-    ModuleRow(Module.SECURITY, p, open)
-    ModuleRow(Module.BUILD, p, open)
-    ModuleRow(Module.LOGS, p, open)
 }
 
 @Composable
-private fun OperationsPage(p: NexusPalette, open: (Module) -> Unit) {
-    SectionHeader("Operasyon Merkezi", "Arıza, bakım, test, kurtarma ve release", p)
-    listOf(Module.CORE, Module.SERVERS, Module.TESTS, Module.MAINTENANCE, Module.RECOVERY, Module.BACKUP, Module.LOGS, Module.SECURITY, Module.BUILD).forEach { ModuleRow(it, p, open) }
+private fun DashboardStateCard(
+    title: String,
+    state: String,
+    detail: String,
+    icon: ImageVector,
+    ok: Boolean,
+    p: NexusPalette,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(19.dp),
+        colors = CardDefaults.cardColors(containerColor = p.surface)
+    ) {
+        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).background(p.surface2, RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = p.accent, modifier = Modifier.size(19.dp))
+                }
+                Spacer(Modifier.weight(1f))
+                Box(Modifier.size(8.dp).background(if (ok) p.success else p.muted, CircleShape))
+            }
+            Text(state, fontWeight = FontWeight.Black, fontSize = 12.sp, color = if (ok) p.success else p.text)
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text(detail, color = p.muted, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable
-private fun LabsPage(p: NexusPalette, open: (Module) -> Unit) {
-    SectionHeader("NEXUS Labs", "Yetkili ve yerel analiz araçları", p)
-    listOf(Module.APK, Module.SOCKET, Module.CRYPTO, Module.NETWORK, Module.BROWSER).forEach { ModuleRow(it, p, open) }
+private fun DiagnosticOverview(history: List<DiagnosticHistoryItem>, p: NexusPalette, openTests: () -> Unit) {
+    val passCount = history.count { it.ok }
+    val failCount = history.count { !it.ok }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = openTests),
+        shape = RoundedCornerShape(21.dp),
+        colors = CardDefaults.cardColors(containerColor = p.surface)
+    ) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Test Sağlığı", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(if (history.isEmpty()) "Henüz gerçek test sonucu yok" else "Son ${history.size} yerel doğrulama", color = p.muted, fontSize = 10.sp)
+                }
+                if (history.isNotEmpty()) {
+                    Text("$passCount PASS · $failCount FAIL", color = if (failCount == 0) p.success else p.danger, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            if (history.isEmpty()) {
+                Surface(shape = RoundedCornerShape(14.dp), color = p.surface2) {
+                    Text("Test Merkezi'ni açarak DNS, TCP, HTTPS ve TLS doğrulaması çalıştır.", modifier = Modifier.padding(12.dp), color = p.muted, fontSize = 10.sp)
+                }
+            } else {
+                DiagnosticTrend(history.take(18).reversed(), p)
+            }
+        }
+    }
 }
 
 @Composable
-private fun CommsPage(p: NexusPalette, open: (Module) -> Unit) {
-    SectionHeader("İletişim & Erişim", "Terminal, dosya, mail ve bildirim", p)
-    listOf(Module.TERMINAL, Module.FILES, Module.MAIL, Module.NOTIFICATIONS).forEach { ModuleRow(it, p, open) }
+private fun DiagnosticTrend(history: List<DiagnosticHistoryItem>, p: NexusPalette) {
+    androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(58.dp)) {
+        if (history.isEmpty()) return@Canvas
+        val step = if (history.size <= 1) size.width else size.width / (history.size - 1).toFloat()
+        val points = history.mapIndexed { index, item ->
+            androidx.compose.ui.geometry.Offset(index * step, if (item.ok) size.height * .25f else size.height * .75f)
+        }
+        for (i in 0 until points.lastIndex) {
+            drawLine(p.accent.copy(alpha = .75f), points[i], points[i + 1], strokeWidth = 3f)
+        }
+        points.forEachIndexed { index, point ->
+            drawCircle(if (history[index].ok) p.success else p.danger, radius = 5f, center = point)
+        }
+    }
+}
+
+@Composable
+private fun QuickActionRail(p: NexusPalette, open: (Module) -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(Module.TESTS, Module.MAINTENANCE, Module.RECOVERY, Module.CORE, Module.BUILD, Module.NOTIFICATIONS).forEach { m ->
+            Surface(
+                modifier = Modifier.width(132.dp).clickable { open(m) },
+                shape = RoundedCornerShape(17.dp),
+                color = p.surface
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Icon(m.icon, null, tint = p.accent, modifier = Modifier.size(21.dp))
+                    Text(m.title, fontWeight = FontWeight.Bold, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(m.subtitle, color = p.muted, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OperationsFeed(
+    history: List<DiagnosticHistoryItem>,
+    maintenance: MaintenanceSnapshot,
+    recovery: Pair<Long, String>?,
+    p: NexusPalette
+) {
+    Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = p.surface), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (maintenance.active) FeedRow("Bakım modu", maintenance.note.ifBlank { "Aktif bakım oturumu" }, p.danger, p)
+            recovery?.let { FeedRow("Recovery preflight", formatTime(it.first), p.accent2, p) }
+            history.take(4).forEach { item ->
+                FeedRow(item.title, "${if (item.ok) "PASS" else "FAIL"} · ${formatTime(item.timestamp)}", if (item.ok) p.success else p.danger, p)
+            }
+            if (!maintenance.active && recovery == null && history.isEmpty()) {
+                Text("Henüz yerel operasyon kaydı yok.", color = p.muted, fontSize = 10.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeedRow(title: String, detail: String, color: Color, p: NexusPalette) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).background(color, CircleShape))
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+            Text(detail, color = p.muted, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun CompactModuleGrid(items: List<Module>, p: NexusPalette, open: (Module) -> Unit) {
+    items.chunked(3).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            row.forEach { module ->
+                Surface(
+                    modifier = Modifier.weight(1f).clickable { open(module) },
+                    shape = RoundedCornerShape(17.dp),
+                    color = p.surface
+                ) {
+                    Column(Modifier.padding(horizontal = 9.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(module.icon, null, tint = p.accent, modifier = Modifier.size(22.dp))
+                        Text(module.title, fontWeight = FontWeight.Bold, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+        }
+    }
 }
 
 @Composable
@@ -524,7 +879,7 @@ private fun SettingsPage(p:NexusPalette,prefs:UserPrefs,onTheme:(String)->Unit,o
     var health by remember(prefs.healthUrl){mutableStateOf(prefs.healthUrl)};var wss by remember(prefs.wssUrl){mutableStateOf(prefs.wssUrl)}
     InputCard(p){OutlinedTextField(health,{health=it.trim()},label={Text("Tam HTTPS Health URL")},modifier=Modifier.fillMaxWidth());Button(enabled=health.isBlank()||health.startsWith("https://"),onClick={saveHealthUrl(health)},modifier=Modifier.fillMaxWidth()){Text("Health URL Kaydet")};OutlinedTextField(wss,{wss=it.trim()},label={Text("Tam WSS URL")},modifier=Modifier.fillMaxWidth());Button(enabled=wss.isBlank()||wss.startsWith("wss://"),onClick={saveWssUrl(wss)},modifier=Modifier.fillMaxWidth()){Text("WSS URL Kaydet")}}
     SectionHeader("Bildirimler","Kanalları ayrı yönet",p);Toggle("Tüm bildirimler",prefs.alerts,onAlerts,p);Toggle("Güvenlik",prefs.securityAlerts,onSecurityAlerts,p);Toggle("Sunucu",prefs.serverAlerts,onServerAlerts,p);Toggle("Build",prefs.buildAlerts,onBuildAlerts,p);Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick=requestPermission,modifier=Modifier.weight(1f)){Text("İzin İste")};Button(onClick=testNotification,modifier=Modifier.weight(1f)){Text("Test")}}
-    InfoCard("Sürüm","NEXUS Control 0.3.0 · Command Center yeniden tasarımı",Icons.Outlined.Info,p)
+    InfoCard("Sürüm","NEXUS Control 0.4.0 · Command Center yeniden tasarımı",Icons.Outlined.Info,p)
 }
 
 @Composable private fun QuickGrid(items:List<Module>,p:NexusPalette,open:(Module)->Unit){items.chunked(2).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(9.dp)){row.forEach{m->Card(modifier=Modifier.weight(1f).clickable{open(m)},colors=CardDefaults.cardColors(containerColor=p.surface)){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(7.dp)){Icon(m.icon,null,tint=p.accent);Text(m.title,fontWeight=FontWeight.Bold,fontSize=12.sp);Text(m.subtitle,color=p.muted,fontSize=10.sp,lineHeight=13.sp)}}};if(row.size==1)Spacer(Modifier.weight(1f))}}}
