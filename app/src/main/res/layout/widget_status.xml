@@ -31,6 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
+            android:id="@+id/widget_status"
             android:text="Core: bağlantı bekleniyor"
             android:textColor="#A8BED8"
             android:textSize="12sp" />
