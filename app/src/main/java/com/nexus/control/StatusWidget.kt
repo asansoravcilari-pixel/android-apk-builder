@@ -11,13 +11,10 @@ import android.widget.RemoteViews
 
 class StatusWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
-        ids.forEach { id -> updateOne(context, manager, id) }
+        ids.forEach { updateOne(context, manager, it) }
     }
 
     companion object {
-        private const val PREFS = "nexus_widget"
-        private const val KEY_OPACITY = "opacity"
-
         fun updateAll(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
             val ids = manager.getAppWidgetIds(ComponentName(context, StatusWidget::class.java))
@@ -25,20 +22,20 @@ class StatusWidget : AppWidgetProvider() {
         }
 
         private fun updateOne(context: Context, manager: AppWidgetManager, id: Int) {
-            val opacity = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(KEY_OPACITY, 78)
-                .coerceIn(0, 100)
+            val opacity = context.getSharedPreferences("nexus_widget", Context.MODE_PRIVATE).getInt("opacity", 78).coerceIn(0, 100)
             val alpha = (255f * (opacity / 100f)).toInt()
-
             val views = RemoteViews(context.packageName, R.layout.widget_status)
-            views.setInt(R.id.widget_root, "setBackgroundColor", Color.argb(alpha, 7, 17, 31))
-
-            val intent = Intent(context, MainActivity::class.java)
+            views.setInt(R.id.widget_root, "setBackgroundColor", Color.argb(alpha, 4, 11, 20))
+            val local = context.getSharedPreferences("nexus_local_state_v1", Context.MODE_PRIVATE)
+            val maintenance = local.getBoolean("maintenance_active", false)
+            val maintenanceNote = local.getString("maintenance_note", "").orEmpty()
+            views.setTextViewText(
+                R.id.widget_status,
+                if (maintenance) "Bakım modu aktif${if (maintenanceNote.isNotBlank()) " · ${maintenanceNote.take(32)}" else ""}"
+                else "Core: bağlantı bekleniyor"
+            )
             val pending = PendingIntent.getActivity(
-                context,
-                0,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.widget_root, pending)
             manager.updateAppWidget(id, views)

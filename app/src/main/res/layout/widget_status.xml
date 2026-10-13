@@ -11,31 +11,47 @@
         android:gravity="center_vertical">
 
         <TextView
-            android:id="@+id/widget_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:text="NEXUS COMMAND"
+            android:textColor="#55DFFF"
+            android:textStyle="bold"
+            android:textSize="10sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
             android:text="NEXUS Control"
             android:textColor="#FFFFFFFF"
             android:textStyle="bold"
             android:textSize="18sp" />
 
         <TextView
-            android:id="@+id/widget_status"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Bağlantı bekleniyor"
-            android:textColor="#B8D7F5"
-            android:textSize="13sp" />
+            android:text="Core: bağlantı bekleniyor"
+            android:textColor="#A8BED8"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:text="TEST  •  BAKIM  •  KURTARMA"
+            android:textColor="#73E6B1"
+            android:textStyle="bold"
+            android:textSize="9sp" />
 
         <TextClock
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="7dp"
             android:format12Hour="HH:mm"
             android:format24Hour="HH:mm"
-            android:textColor="#66E2FF"
+            android:textColor="#55DFFF"
             android:textStyle="bold"
-            android:textSize="22sp" />
+            android:textSize="20sp" />
     </LinearLayout>
 </FrameLayout>
