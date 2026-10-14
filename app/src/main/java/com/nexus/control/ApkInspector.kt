@@ -29,7 +29,8 @@ data class ApkReport(
     val exportedComponents: List<String>,
     val abiSet: List<String>,
     val hasNetworkSecurityConfig: Boolean,
-    val archiveHighlights: List<String>
+    val archiveHighlights: List<String>,
+    val endpointCandidates: List<String>
 )
 
 object ApkInspector {
@@ -42,12 +43,13 @@ object ApkInspector {
 
         try {
             @Suppress("DEPRECATION")
+            val signingFlag = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
             val flags = PackageManager.GET_PERMISSIONS or
                 PackageManager.GET_ACTIVITIES or
                 PackageManager.GET_SERVICES or
                 PackageManager.GET_RECEIVERS or
                 PackageManager.GET_PROVIDERS or
-                if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+                signingFlag
 
             @Suppress("DEPRECATION")
             val info = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
@@ -90,6 +92,12 @@ object ApkInspector {
             var networkSecurity = false
             val abis = linkedSetOf<String>()
             val highlights = linkedSetOf<String>()
+            val endpointCandidates = linkedSetOf<String>()
+            var inspectedPayloadBytes = 0L
+            val maxPayloadBytes = 8L * 1024 * 1024
+            val maxEntryBytes = 2L * 1024 * 1024
+            val endpointRegex = Regex("(?:https?://|wss?://)[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]{4,240}")
+            val domainRegex = Regex("(?<![A-Za-z0-9.-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+(?:com|net|org|io|dev|app|xyz|tr|cloud|tech)(?::\\d{2,5})?(?![A-Za-z0-9.-])", RegexOption.IGNORE_CASE)
 
             ZipFile(file).use { zip ->
                 val e = zip.entries()
@@ -108,6 +116,40 @@ object ApkInspector {
                         name.startsWith("assets/") && highlights.size < 20 -> highlights.add("asset · $name")
                         name.startsWith("res/xml/") && highlights.size < 20 -> highlights.add("xml · $name")
                         name.startsWith("META-INF/") && name.endsWith(".SF") && highlights.size < 20 -> highlights.add("signature · $name")
+                    }
+
+                    val scanCandidate = !item.isDirectory && (
+                        name.matches(Regex("classes\\d*\\.dex")) ||
+                            name.startsWith("assets/") ||
+                            name.startsWith("res/raw/") ||
+                            name.endsWith(".json") ||
+                            name.endsWith(".txt") ||
+                            name.endsWith(".js")
+                        )
+                    if (scanCandidate && endpointCandidates.size < 40 && inspectedPayloadBytes < maxPayloadBytes) {
+                        val declaredSize = item.size
+                        if (declaredSize != 0L) {
+                            val entryBudget = if (declaredSize > 0L) declaredSize.coerceAtMost(maxEntryBytes) else maxEntryBytes
+                            val remaining = (maxPayloadBytes - inspectedPayloadBytes).coerceAtMost(entryBudget).toInt()
+                            val bytes = zip.getInputStream(item).use { input ->
+                                val buffer = ByteArray(remaining)
+                                var offset = 0
+                                while (offset < buffer.size) {
+                                    val read = input.read(buffer, offset, buffer.size - offset)
+                                    if (read <= 0) break
+                                    offset += read
+                                }
+                                buffer.copyOf(offset)
+                            }
+                            inspectedPayloadBytes += bytes.size
+                            val text = String(bytes, Charsets.ISO_8859_1)
+                            endpointRegex.findAll(text).take(30).forEach { match ->
+                                endpointCandidates.add(match.value.trimEnd('.', ',', ';', '\"', '\'', ')', ']', '}'))
+                            }
+                            if (endpointCandidates.size < 40) {
+                                domainRegex.findAll(text).take(30).forEach { match -> endpointCandidates.add(match.value) }
+                            }
+                        }
                     }
                 }
             }
@@ -131,7 +173,8 @@ object ApkInspector {
                 exportedComponents = exported,
                 abiSet = abis.toList().sorted(),
                 hasNetworkSecurityConfig = networkSecurity,
-                archiveHighlights = highlights.toList()
+                archiveHighlights = highlights.toList(),
+                endpointCandidates = endpointCandidates.take(40)
             )
         } finally {
             file.delete()

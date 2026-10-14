@@ -51,7 +51,7 @@ object Diagnostics {
             conn.readTimeout = 5000
             conn.instanceFollowRedirects = true
             conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "NEXUS-Control/0.4")
+            conn.setRequestProperty("User-Agent", "NEXUS-Control/0.5")
             val code = conn.responseCode
             val finalUrl = conn.url.toString()
             val type = conn.contentType ?: "?"
@@ -105,7 +105,7 @@ class SocketProbe {
         }
         state = SocketState.CONNECTING
         handler.post { onState(state) }
-        val request = Request.Builder().url(url).header("User-Agent", "NEXUS-Control/0.4").build()
+        val request = Request.Builder().url(url).header("User-Agent", "NEXUS-Control/0.5").build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             private fun postState(newState: SocketState) {
                 state = newState
